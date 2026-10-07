@@ -39,7 +39,7 @@ Catatan: belanja modal/pemeliharaan tidak otomatis dipangkas saat pendapatan tur
 | `events.py` | modul kejadian tak terduga: baca/validasi tabel Kejadian & Asumsi_Kejadian, terapkan ke mesin |
 | `io_utils.py` | baca/tulis template Excel (termasuk sheet kejadian opsional) |
 | `app.py` | antarmuka Streamlit |
-| `data/template_input_hkpd.xlsx` | template sekaligus data contoh Magelang |
+| `data/template_input_hkpd.xlsx` | template sekaligus data contoh pemda xxx |
 | `tests/test_engine.py` | tes regresi terhadap angka narasi kajian + modul kejadian + snapshot model dasar (`snapshot_baseline.csv`) |
 
 Jalankan tes: `python tests/test_engine.py` (atau `pytest`).
