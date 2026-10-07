@@ -2,7 +2,7 @@
 
 Aplikasi Streamlit untuk memproyeksikan rasio **belanja pegawai (≤ 30%)** dan **belanja infrastruktur (≥ 40%)**
 dan menghasilkan **saran preskriptif** (plafon TPP, jalur penyesuaian, kebutuhan realokasi, sensitivitas, simulasi).
-Logika inti mereplikasi kertas kerja Kab. Magelang (F1/F2/F3) dan **divalidasi sampai rupiah** (`tests/`).
+(`tests/`).
 
 ## Menjalankan lokal
 ```bash
