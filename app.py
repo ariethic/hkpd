@@ -5,8 +5,8 @@ import streamlit_authenticator as stauth
 # Catatan: Untuk produksi, sangat disarankan menggunakan password yang sudah di-hash
 credentials = {
     "usernames": {
-        "budi123": {"name": "Budi", "password": "passwordrahasia123"},
-        "ani456": {"name": "Ani", "password": "passwordani456"}
+        "budi123": {"name": "Budi", "password": "rahasia123"},
+        "ani456": {"name": "Ani", "password": "rahasiaani456"}
     }
 }
 
