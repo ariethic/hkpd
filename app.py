@@ -1,33 +1,46 @@
+# =========================================================
+# TARUH BLOK INI DI BAGIAN PALING ATAS FILE APP.PY ANDA
+# =========================================================
 import streamlit as st
+import pandas as pd
+import numpy as np
 import streamlit_authenticator as stauth
 
-# 1. Definisikan user yang boleh login (Username & Password)
-# Catatan: Untuk produksi, sangat disarankan menggunakan password yang sudah di-hash
 credentials = {
     "usernames": {
-        "budi123": {"name": "Budi", "password": "rahasia123"},
-        "ani456": {"name": "Ani", "password": "rahasiaani456"}
+        "admin123": {"name": "Administrator", "password": "PasswordMasuk123"},
+        "user_tamu": {"name": "Tamu Spesial", "password": "PasswordTamu456"}
     }
 }
 
-# 2. Buat objek autentikator
 authenticator = stauth.Authenticate(
     credentials,
-    cookie_name="nama_cookie_bebas",
-    key="kunci_signature_bebas",
+    cookie_name="streamlit_login_cookie",
+    key="kunci_rahasia_bebas_apa_saja",
     cookie_expiry_days=30
 )
 
-# 3. Tampilkan form login di web
-authenticator.login()
+authenticator.login(fields={'Form name': 'Silakan Login'})
 
-# 4. Cek status login
-if st.session_state["authentication_status"]:
-    authenticator.logout('Logout', 'sidebar')
-    st.write(f'Selamat datang *{st.session_state["name"]}*')
-    
-    # ---------------------------------------------
-    import io, hashlib
+# JIKA BELUM LOGIN ATAU PASSWORD SALAH, STOP APLIKASI DI SINI
+if st.session_state["authentication_status"] is False:
+    st.error('Username atau password salah. Silakan coba lagi.')
+    st.stop() # Menghentikan kode agar tidak lanjut ke bawah
+elif st.session_state["authentication_status"] is None:
+    st.warning('Harap masukkan username dan password Anda.')
+    st.stop() # Menghentikan kode agar tidak lanjut ke bawah
+
+# JIKA BERHASIL LOGIN, TAMPILKAN TOMBOL LOGOUT
+authenticator.logout('Log out', 'sidebar')
+
+# =========================================================
+# DI BAWAH SINI: LANGSUNG TEMPEL SELURUH KODE ASLI CLAUDE
+# TANPA PERLU DIUBAH ATAU DIGESER SPASINYA SAMA SEKALI
+# =========================================================
+st.success(f"Selamat datang, {st.session_state['name']}!")
+
+#----------------------------------------------------------
+import io, hashlib
 from dataclasses import replace
 from pathlib import Path
 import numpy as np
@@ -42,7 +55,7 @@ import events as ev
 
 st.set_page_config(page_title="Proyeksi Kepatuhan UU HKPD", page_icon="📊", layout="wide")
 TEMPLATE = Path(__file__).parent / "data" / "template_input_hkpd.xlsx"
-APPROACH = {"A3": "Pendekatan 3 — belanja = rasio tahun dasar × pendapatan (direkomendasikan kajian Magelang)",
+APPROACH = {"A3": "Pendekatan 3 — belanja = rasio tahun dasar × pendapatan (direkomendasikan kajian pemda xxx)",
             "A1": "Pendekatan 1 — rasio belanja/pendapatan naik ke rata-rata masa normal setelah masa pemulihan",
             "A2": "Pendekatan 2 — belanja dari penjumlahan tren tiap jenis belanja (bottom-up)"}
 M = 1e9  # tampilkan dalam Rp miliar
@@ -83,7 +96,7 @@ with st.sidebar:
                 st.success("Data dimuat dari file Anda.")
             except Exception as e:
                 st.error(f"Gagal membaca file: {e}")
-    if st.button("↩️ Kembali ke data contoh (Kab. Magelang)"):
+    if st.button("↩️ Kembali ke data contoh (Kab. pemda xxx)"):
         set_tables(load_demo(), "demo"); st.rerun()
     use_ev = st.checkbox("Terapkan kejadian tak terduga (tab Kejadian)", True,
                          help="Kosongkan tabel kejadian bila tidak ada. Matikan centang ini untuk melihat model dasar tanpa kejadian.")
@@ -447,7 +460,7 @@ with tabs[6]:
 # ------------------------------------------------------------------ tab 8
 with tabs[8]:
     st.markdown("""
-### Alur model (mengikuti kertas kerja Kab. Magelang, divalidasi hingga rupiah)
+### Alur model (mengikuti kertas kerja Kab. pemda xxx, divalidasi hingga rupiah)
 1. **Periode data**: laju tumbuh *normal* = rata-rata 2017–2019; laju *pemulihan* = pertumbuhan tahun dasar vs tahun sebelumnya (dipakai 2 tahun pertama); 2020–2021 dianggap tidak normal dan tidak dipakai. Laju pemulihan < 100% dianggap 100%; laju > 5× dibuang sebagai pencilan (mis. hibah 2018).
 2. **Pendapatan**: PAD & hibah tumbuh dua fase; transfer antar daerah tetap; transfer pusat = tahun lalu − gaji PNS pensiun + perubahan gaji PPPK (karena DAU memuat komponen gaji).
 3. **Total belanja** (Pendekatan 3): rasio belanja/pendapatan tahun dasar × pendapatan. Belanja transfer tetap, BTT = rata-rata 2016–2019, belanja modal & pemeliharaan tumbuh dengan laju normal.
@@ -470,14 +483,7 @@ with tabs[8]:
 - Atribusi per kejadian dihitung dengan menjalankan model satu kejadian pada satu waktu; efek gabungan tidak harus sama dengan jumlah efek individual.
 """)
 
-    # ---------------------------------------------
-    st.title("Aplikasi Proyeksi B. Pegawai dan Infrastruktur")
     
-elif st.session_state["authentication_status"] is False:
-    st.error('Username/password salah')
-elif st.session_state["authentication_status"] is None:
-    st.warning('Silakan masukkan username dan password Anda')
-
 
 
 
