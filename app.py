@@ -8,8 +8,8 @@ import streamlit_authenticator as stauth
 
 credentials = {
     "usernames": {
-        "sayagembira1": {"name": "Tamu1", "password": "Rahasia123"},
-        "sayagembira2": {"name": "Tamu2", "password": "Rahasia456"}
+        "Tamu1": {"name": "Tamu1", "password": "Rahasia123"},
+        "Tamu2": {"name": "Tamu2", "password": "Rahasia456"}
     }
 }
 
