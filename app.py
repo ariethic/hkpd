@@ -53,7 +53,7 @@ import advisor as ad
 import events as ev
 
 st.set_page_config(page_title="Proyeksi Kepatuhan UU HKPD", page_icon="📊", layout="wide")
-APPROACH = {"A3": "Pendekatan 3 — belanja = rasio tahun dasar × pendapatan (direkomendasikan kajian Magelang)",
+APPROACH = {"A3": "Pendekatan 3 — belanja = rasio tahun dasar × pendapatan (direkomendasikan kajian pemda xxx)",
             "A1": "Pendekatan 1 — rasio belanja/pendapatan naik ke rata-rata masa normal setelah masa pemulihan",
             "A2": "Pendekatan 2 — belanja dari penjumlahan tren tiap jenis belanja (bottom-up)"}
 M = 1e9  # tampilkan dalam Rp miliar
@@ -66,14 +66,14 @@ def show(df, **kw):
 
 
 # ------------------------------------------------------------------ state data
-DEMO = Path(__file__).parent / "data" / "template_input_hkpd.xlsx"     # data contoh Kab. Magelang
-MG = pr.magelang()
-PRESET_MG, PRESET_OWN = "Kab. Magelang (setup + data contoh)", "Isi sendiri"
+DEMO = Path(__file__).parent / "data" / "template_input_hkpd.xlsx"     # data contoh Kab. pemda xxx
+MG = pr.pemda xxx()
+PRESET_MG, PRESET_OWN = "Kab. pemda xxx (setup + data contoh)", "Isi sendiri"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def load_demo():
-    # data Magelang diselaraskan ke struktur baku (menambah baris opsional trf_dau/dbh/dak dan golongan pensiun lengkap); hasil identik
+    # data pemda xxx diselaraskan ke struktur baku (menambah baris opsional trf_dau/dbh/dak dan golongan pensiun lengkap); hasil identik
     return tables_to_ui(pr.align_tables(MG, tables_from_excel(DEMO)))
 
 
@@ -156,7 +156,7 @@ with st.sidebar:
     # --- 1. setup periode & asumsi (wajib)
     st.subheader("1️⃣ Setup periode & asumsi (wajib)")
     st.radio("Mulai dari", [PRESET_MG, PRESET_OWN], key="su_preset", on_change=_on_preset,
-             help="Magelang: mengisi seluruh setup dan data contoh. Isi sendiri: ubah setup di bawah, lalu unduh template yang menyesuaikan.")
+             help="pemda xxx: mengisi seluruh setup dan data contoh. Isi sendiri: ubah setup di bawah, lalu unduh template yang menyesuaikan.")
     st.selectbox("Jenis pemda", pr.JENIS, key="su_jenis", on_change=_touch,
                  help="Provinsi: transfer ke bawahan = kab/kota. Kabupaten/Kota: transfer ke bawahan = desa. Hanya mengubah label dan contoh.")
     c1, c2, c3 = st.columns(3)
@@ -205,7 +205,7 @@ with st.sidebar:
             st.warning("Struktur tabel tidak cocok dengan setup:\n\n" + "\n\n".join("• " + i for i in iss))
             st.button("🔧 Sesuaikan struktur tabel dengan setup", on_click=_do_align, help="Nilai pada tahun/kode yang sama dipertahankan; sel baru kosong.")
         st.button("🆕 Mulai dari template kosong sesuai setup", on_click=_do_blank)
-    st.button("↩️ Muat ulang contoh Kab. Magelang", on_click=_reload_demo)
+    st.button("↩️ Muat ulang contoh Kab. pemda xxx", on_click=_reload_demo)
     use_ev = st.checkbox("Terapkan kejadian tak terduga (tab Kejadian)", True,
                          help="Kosongkan tabel kejadian bila tidak ada. Matikan centang ini untuk melihat model dasar tanpa kejadian.")
     st.divider()
@@ -585,7 +585,7 @@ with tabs[8]:
 - Pencilan: laju > **{setup.outlier_cap:g}×** dibuang · lantai pemulihan: **{'aktif' if setup.floor_pemulihan else 'nonaktif'}** · inflasi TPP: **{p.inflasi_tpp*100:.2f}%** ({'dari data historis' if infl_from_data else 'diisi sendiri'}).
 """)
     st.markdown("""
-### Alur model (mengikuti kertas kerja Kab. Magelang, divalidasi hingga rupiah)
+### Alur model (mengikuti kertas kerja Kab. pemda xxx, divalidasi hingga rupiah)
 1. **Periode data**: laju tumbuh *normal* = rata-rata laju pada **tahun normal** (tahun yang laju tumbuhnya menyentuh tahun abnormal dibuang); laju *pemulihan* = rata-rata pertumbuhan **tahun acuan pemulihan** (dipakai sebanyak *lama pemulihan* tahun proyeksi pertama); tahun abnormal tidak dipakai. Laju pemulihan < 100% dianggap 100% (bila diaktifkan); laju di atas batas pencilan dibuang dari rata-rata normal.
 2. **Pendapatan**: PAD & hibah tumbuh dua fase; transfer antar daerah tetap; transfer pusat = tahun lalu − gaji PNS pensiun + perubahan gaji PPPK (karena DAU memuat komponen gaji).
 3. **Total belanja** (Pendekatan 3): rasio belanja/pendapatan tahun dasar × pendapatan. Belanja transfer tetap, BTT = rata-rata pada tahun rujukan, belanja modal & pemeliharaan tumbuh dengan laju normal.
