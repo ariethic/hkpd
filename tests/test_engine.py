@@ -165,6 +165,194 @@ def test_snapshot_model_dasar_tidak_berubah():
                 assert np.allclose(g[c].values, n.loc[g.index, c].values, rtol=1e-9, atol=1e-3), (a, k, c)
 
 
+
+# ---------------------------------------------------------------- setup adaptif (tahun/asumsi dari sidebar)
+import io as _io
+import periode as pr
+import io_utils as iou
+from engine import rec_factor, nor_factor, _derived_hist
+
+T0 = iou.tables_from_excel(DATA)
+MG = pr.magelang()
+
+
+def _shift_tables(t, k):
+    """Geser semua tahun +k (kolom/baris/tahun_dasar) -> data sama, kalender berbeda."""
+    out = {n: d.copy() for n, d in iou.normalize_tables(t).items()}
+    h = out["Historis"]; h.columns = [c + k if isinstance(c, (int, np.integer)) else c for c in h.columns]
+    p_ = out["Pensiun"]; p_.columns = [c + k if isinstance(c, (int, np.integer)) else c for c in p_.columns]
+    out["Jalur"]["tahun"] = out["Jalur"]["tahun"] + k
+    out["Skenario_TPP"]["tahun"] = out["Skenario_TPP"]["tahun"] + k
+    d = out["Dasar"]; d.loc[d["kode"] == "tahun_dasar", "nilai"] = d.loc[d["kode"] == "tahun_dasar", "nilai"] + k
+    return out
+
+
+def _shift_setup(s, k):
+    sh = lambda t: tuple(y + k for y in t)
+    return pr.Setup(jenis_pemda=s.jenis_pemda, tahun_awal=s.tahun_awal + k, tahun_dasar=s.tahun_dasar + k, tahun_akhir=s.tahun_akhir + k,
+                    tahun_target=s.tahun_target + k, tahun_normal=sh(s.tahun_normal), tahun_abnormal=sh(s.tahun_abnormal),
+                    tahun_pemulihan=sh(s.tahun_pemulihan), n_pemulihan=s.n_pemulihan, tahun_rata=sh(s.tahun_rata),
+                    outlier_cap=s.outlier_cap, floor_pemulihan=s.floor_pemulihan)
+
+
+def _runs(t, s, **kw):
+    i = iou.inputs_from_tables(t, s)
+    return run_all(i, s.to_params(**kw))
+
+
+def test_setup_magelang_identik_dengan_params_default():
+    a = run_all(inp, Params())
+    b = _runs(T0, MG)
+    for k in a:
+        assert np.allclose(a[k].df.values, b[k].df.values, rtol=1e-12, atol=1e-6)
+
+
+def test_invarian_geser_kalender():
+    base = _runs(T0, MG)
+    for k in (1, -3, 5):
+        r = _runs(_shift_tables(T0, k), _shift_setup(MG, k))
+        for n in base:
+            assert np.allclose(base[n].df.values, r[n].df.values, rtol=1e-12, atol=1e-6), (k, n)
+            assert list(r[n].df.index) == [y + k for y in base[n].df.index]
+
+
+def test_tahun_abnormal_boleh_kosong_tetapi_normal_wajib():
+    t = iou.normalize_tables(T0)
+    h = t["Historis"].copy(); h[2020] = np.nan                      # 2020 abnormal -> tak dipakai
+    t2 = dict(t, Historis=h)
+    base = _runs(T0, MG)
+    r = _runs(t2, MG)
+    assert np.allclose(base["RPJMD"].df.values, r["RPJMD"].df.values, rtol=1e-12, atol=1e-6)
+    h = t["Historis"].copy(); h[2018] = np.nan                       # 2018 normal -> wajib
+    try:
+        iou.inputs_from_tables(dict(t, Historis=h), MG)
+        raise AssertionError("harus gagal")
+    except ValueError as e:
+        assert "sel kosong" in str(e) and "2018" in str(e)
+
+
+def test_tahun_normal_dan_abnormal_mengubah_laju():
+    i = iou.inputs_from_tables(T0, MG)
+    h = _derived_hist(i.hist)
+    p1 = MG.to_params()
+    g = lambda y: float(h.loc["pajak", y] / h.loc["pajak", y - 1])
+    assert abs(nor_factor(h.loc["pajak"], p1) - np.mean([g(2017), g(2018), g(2019)])) < 1e-12
+    s2 = pr.Setup(**{**MG.__dict__, "tahun_normal": (2018, 2019)})
+    assert abs(nor_factor(h.loc["pajak"], s2.to_params()) - np.mean([g(2018), g(2019)])) < 1e-12
+    # laju yang menyentuh tahun abnormal dibuang otomatis (2022 dibanding 2021 abnormal)
+    s3 = pr.Setup(**{**MG.__dict__, "tahun_normal": (2018, 2019, 2022)})
+    assert abs(nor_factor(h.loc["pajak"], s3.to_params()) - np.mean([g(2018), g(2019)])) < 1e-12
+    assert any("dibuang" in w for w in s3.warnings())
+
+
+def test_pemulihan_multi_tahun_dan_nol():
+    i = iou.inputs_from_tables(T0, MG)
+    h = _derived_hist(i.hist)
+    g = lambda y: float(h.loc["pajak", y] / h.loc["pajak", y - 1])
+    s2 = pr.Setup(**{**MG.__dict__, "tahun_pemulihan": (2021, 2022)})
+    exp = max(np.mean([g(2021), g(2022)]), 1.0)
+    assert abs(rec_factor(h.loc["pajak"], s2.to_params(), 2022) - exp) < 1e-12
+    # lama pemulihan 0 -> semua tahun memakai laju normal
+    s0 = pr.Setup(**{**MG.__dict__, "n_pemulihan": 0})
+    d = run(i, s0.to_params(), all_scenarios(i, s0.to_params())[KEBIJAKAN_LAMA]).df
+    exp = sum(h.loc[k, 2022] * nor_factor(h.loc[k], s0.to_params()) for k in ["pajak", "retribusi", "kekayaan", "lain_pad"])
+    assert abs(d.pad.loc[2023] - exp) < 1.0
+    # lantai pemulihan dimatikan memberi hasil berbeda bila ada laju < 1
+    s_nf = pr.Setup(**{**MG.__dict__, "floor_pemulihan": False})
+    f_on, f_off = rec_factor(h.loc["lain_pad"], MG.to_params(), 2022), rec_factor(h.loc["lain_pad"], s_nf.to_params(), 2022)
+    assert g_ok(h, "lain_pad") == (f_on != f_off)
+
+
+def g_ok(h, k):
+    return float(h.loc[k, 2022] / h.loc[k, 2021]) < 1
+
+
+def test_validasi_setup():
+    bad = lambda **kw: pr.Setup(**{**MG.__dict__, **kw}).errors()
+    assert bad() == []
+    assert bad(tahun_normal=())                                   # wajib
+    assert bad(tahun_normal=(2020, 2021, 2017))                   # normal & abnormal tumpang tindih
+    assert bad(tahun_normal=(2016,))                              # normal tak punya data tahun sebelumnya
+    assert bad(tahun_target=2030) and bad(tahun_akhir=2021) and bad(n_pemulihan=9)
+    assert bad(tahun_rata=(2016, 2020))                           # rujukan memuat abnormal
+    assert bad(tahun_pemulihan=(), n_pemulihan=2) and not bad(tahun_pemulihan=(), n_pemulihan=0)
+    assert bad(outlier_cap=1.0)
+
+
+def test_template_adaptif_dan_roundtrip():
+    s = pr.Setup(tahun_awal=2015, tahun_dasar=2023, tahun_akhir=2029, tahun_target=2028, tahun_normal=(2018, 2019), tahun_abnormal=(2020, 2021),
+                 tahun_pemulihan=(2022, 2023), n_pemulihan=1, tahun_rata=(2017, 2018, 2019))
+    assert s.errors() == []
+    t = iou.tables_from_excel(_io.BytesIO(iou.template_bytes(s)))
+    assert pr.structure_issues(s, t) == [] and pr.infer_setup(t, MG) == s
+    assert sorted(pr._yint(t["Historis"].columns)) == list(range(2015, 2024)) and t["Jalur"]["tahun"].tolist() == list(range(2024, 2030))
+    assert sorted(pr._yint(t["Pensiun"].columns)) == list(range(2023, 2030))
+    # data Magelang -> setup berbeda: struktur dilaporkan, align mempertahankan nilai yang cocok
+    assert pr.structure_issues(s, T0)
+    al = pr.align_tables(s, iou.tables_to_ui(T0))
+    assert pr.structure_issues(s, iou.normalize_tables(al)) == []
+    h = iou.normalize_tables(al)["Historis"].set_index("kode")
+    assert h.loc["pajak", 2019] == iou.normalize_tables(T0)["Historis"].set_index("kode").loc["pajak", 2019] and np.isnan(h.loc["pajak", 2023])
+    # template data Magelang kembali identik di hasil
+    t1 = iou.tables_from_excel(_io.BytesIO(iou.template_bytes(MG, T0)))
+    a, b = _runs(T0, MG), _runs(t1, MG)
+    assert max(np.max(np.abs(a[k].df.values - b[k].df.values)) for k in a) == 0.0
+
+
+def test_setup_df_roundtrip():
+    s = pr.Setup(tahun_awal=2014, tahun_dasar=2024, tahun_akhir=2030, tahun_target=2029, tahun_normal=(2016, 2018), tahun_abnormal=(2020,),
+                 tahun_pemulihan=(2024,), n_pemulihan=3, tahun_rata=(2016, 2017), outlier_cap=3.5, floor_pemulihan=False, jenis_pemda="Provinsi")
+    assert pr.Setup.from_df(s.to_df()) == s
+
+
+# ---------------------------------------------------------------- jenis transfer (DAU/DBH/DAK, antar daerah, ke bawahan)
+def _inp_tr(**dasar):
+    d = dict(inp.dasar); d.update(dasar)
+    return replace(inp, dasar=d)
+
+
+def test_potong_dau_saja_dan_batas_nilai():
+    tr0 = inp.hist.loc["trf_pusat", 2022]
+    i1 = _inp_tr(trf_dau=0.6 * tr0, trf_dbh=0.1 * tr0, trf_dak=0.2 * tr0)
+    b = _df(i1)
+    K = [["DAU", 2026, "akhir", "trf_dau", "persen", -10, ""]]
+    d = _df(replace(i1, kejadian=coerce_event_table("Kejadian", pd.DataFrame(K, columns=ev.COLS_K))))
+    assert np.allclose((d.transfer_pusat / b.transfer_pusat - 1).loc[[2026, 2027]], -0.06)          # 10% x porsi DAU 60%
+    K = [["DAK", 2026, None, "trf_dak", "rupiah", -9e15, ""]]                                    # tak bisa melebihi nilai DAK
+    d = _df(replace(i1, kejadian=coerce_event_table("Kejadian", pd.DataFrame(K, columns=ev.COLS_K))))
+    assert abs((d.transfer_pusat - b.transfer_pusat).loc[2026] + 0.2 * b.transfer_pusat.loc[2026]) < 1.0
+
+
+def test_jenis_transfer_tanpa_data_porsi_diperingatkan():
+    K = [["DAU", 2026, None, "trf_dau", "persen", -10, ""]]
+    i2 = replace(inp, kejadian=coerce_event_table("Kejadian", pd.DataFrame(K, columns=ev.COLS_K)))
+    r = run(i2, Params(), all_scenarios(i2, Params())[KEBIJAKAN_LAMA])
+    assert any("Dasar" in w for w in r.event_warnings) and not r.event_active
+    assert np.allclose(r.df.values, _df(inp).values, rtol=1e-12, atol=1e-6)
+
+
+def test_transfer_total_antar_daerah_dan_belanja_transfer_total():
+    b = _df(inp)
+    d = _df(_with([["x", 2026, None, "transfer_total", "rupiah", -20e9, ""]]))
+    assert abs(d.dampak_pendapatan.loc[2026] + 20e9) < 1.0
+    d = _df(_with([["x", 2026, None, "trf_antar", "persen", -50, ""]]))
+    assert abs(d.dampak_pendapatan.loc[2026] + 0.5 * inp.hist.loc["trf_antar", 2022]) < 1.0
+    # transfer ke bawahan: _total mengubah total belanja, tanpa _total hanya menggeser komposisi
+    tb = inp.hist.loc["transfer", 2022]
+    d1 = _df(_with([["x", 2026, None, "belanja_transfer_total", "persen", -10, ""]]))
+    assert abs((d1.belanja - b.belanja).loc[2026] + 0.1 * tb) < 1.0 and abs((d1.belanja_transfer - b.belanja_transfer).loc[2026] + 0.1 * tb) < 1.0
+    assert abs((d1.pool_barjas_hibah_bansos - b.pool_barjas_hibah_bansos).loc[2026]) < 1.0
+    d2 = _df(_with([["x", 2026, None, "belanja_transfer", "persen", -10, ""]]))
+    assert abs((d2.belanja - b.belanja).loc[2026]) < 1.0 and abs((d2.pool_barjas_hibah_bansos - b.pool_barjas_hibah_bansos).loc[2026] - 0.1 * tb) < 1.0
+
+
+def test_label_komponen_menurut_jenis_pemda():
+    assert "desa" in ev.komponen_labels("Kabupaten")["belanja_transfer"] and "kabupaten/kota" in ev.komponen_labels("Provinsi")["belanja_transfer"]
+    K, A = ev.contoh_tables([2030, 2031, 2032, 2033], "Provinsi")
+    assert set(K["komponen"]) <= set(ev.KOMPONEN) and set(A["parameter"]) <= set(ev.PARAMETER)
+    assert K["tahun_mulai"].between(2030, 2033).all()
+
+
 if __name__ == "__main__":
     for k, v in list(globals().items()):
         if k.startswith("test_"):

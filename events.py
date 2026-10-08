@@ -28,7 +28,11 @@ REV_ALL = ["pajak", "retribusi", "kekayaan", "lain_pad", "trf_pusat", "trf_antar
 KOMPONEN = {
     # --- pendapatan
     "trf_pusat": "Pendapatan: transfer pusat (DAU/DBH/DAK)",
-    "trf_antar": "Pendapatan: transfer antar daerah",
+    "trf_dau": "Pendapatan: DAU saja (bagian dari transfer pusat; perlu Dasar.trf_dau)",
+    "trf_dbh": "Pendapatan: DBH saja (bagian dari transfer pusat; perlu Dasar.trf_dbh)",
+    "trf_dak": "Pendapatan: DAK saja (fisik+nonfisik; bagian dari transfer pusat; perlu Dasar.trf_dak)",
+    "trf_antar": "Pendapatan: transfer antar daerah (mis. bantuan keuangan/bagi hasil dari pemda tingkat atas)",
+    "transfer_total": "Pendapatan: seluruh transfer (pusat + antar daerah) satu angka",
     "pajak": "Pendapatan: pajak daerah",
     "retribusi": "Pendapatan: retribusi",
     "kekayaan": "Pendapatan: hasil kekayaan daerah dipisahkan",
@@ -44,11 +48,24 @@ KOMPONEN = {
     "tpp": "Belanja: TPP",
     "peg_lain": "Belanja: pegawai lainnya (di luar gaji, TPP, guru)",
     "btt": "Belanja: belanja tidak terduga (BTT)",
-    "belanja_transfer": "Belanja: belanja transfer (mis. bagi hasil ke desa)",
+    "belanja_transfer": "Belanja: belanja transfer ke bawahan — hanya menggeser komposisi (total belanja tetap)",
+    "belanja_transfer_total": "Belanja: belanja transfer ke bawahan — total belanja ikut berubah (pemda benar-benar memotong/menambah)",
     # --- pembiayaan
     "silpa": "SiLPA: tambahan/pengurangan SiLPA tahun tsb (hanya mode rupiah)",
 }
-AGG_REV = {"pad": PAD_KEYS, "pendapatan_total": REV_ALL}
+AGG_REV = {"pad": PAD_KEYS, "pendapatan_total": REV_ALL, "transfer_total": ["trf_pusat", "trf_antar"]}
+SUB_TRF = ["trf_dau", "trf_dbh", "trf_dak"]   # bagian dari trf_pusat; porsi = nilai Dasar tahun dasar / transfer pusat tahun dasar
+
+
+def komponen_labels(jenis: str = "Kabupaten") -> dict:
+    """Label komponen menyesuaikan jenis pemda (provinsi: bawahan = kab/kota; kab/kota: bawahan = desa)."""
+    bawah = "kabupaten/kota" if jenis == "Provinsi" else "desa"
+    asal = "pemerintah provinsi" if jenis != "Provinsi" else "provinsi lain/pusat"
+    lab = dict(KOMPONEN)
+    lab["belanja_transfer"] = f"Belanja: transfer ke {bawah} (bagi hasil, bankeu) — hanya menggeser komposisi, total belanja tetap"
+    lab["belanja_transfer_total"] = f"Belanja: transfer ke {bawah} — total belanja ikut berubah (pemda benar-benar memotong/menambah)"
+    lab["trf_antar"] = f"Pendapatan: transfer antar daerah (mis. bantuan keuangan dari {asal})"
+    return lab
 
 # parameter: (label, satuan) -- nilai diisi dalam persen (100 = 100%), kecuali delta_pad (poin %/thn)
 PARAMETER = {
@@ -154,6 +171,28 @@ class Shocks:
             else:
                 keep.append(r)
         self.rec_k = keep
+        # porsi jenis transfer pusat (DAU/DBH/DAK) terhadap transfer pusat tahun dasar
+        self.share = {}
+        d = getattr(inp, "dasar", {}) or {}
+        try:
+            by = int(d.get("tahun_dasar"))
+            tr0 = float(inp.hist.loc["trf_pusat", by])
+        except Exception:
+            tr0 = 0.0
+        for k in SUB_TRF:
+            v = d.get(k)
+            if v is not None and np.isfinite(v) and tr0 > 0:
+                self.share[k] = float(v) / tr0
+        keep = []
+        for r in self.rec_k:
+            if r["key"] in SUB_TRF and r["key"] not in self.share:
+                w1.append(f"Kejadian '{r['kejadian']}': komponen {r['key']} butuh nilai '{r['key']}' tahun dasar di sheet Dasar "
+                          f"(Rp, kolom nilai) agar porsinya terhadap transfer pusat diketahui; baris dilewati.")
+            else:
+                keep.append(r)
+        self.rec_k = keep
+        if any(v > 1.0 + 1e-9 for v in self.share.values()) or sum(self.share.values()) > 1.0 + 1e-9:
+            w1.append("Dasar: jumlah DAU+DBH+DAK tahun dasar melebihi transfer pusat tahun dasar (Historis) — periksa isian.")
         self.rec_a, w2 = _parse(getattr(inp, "asumsi_kejadian", None), COLS_A, "parameter", list(PARAMETER), MODE_A, self.years, "Asumsi_Kejadian")
         self.warnings = w1 + w2
 
@@ -191,6 +230,15 @@ class Shocks:
         """rev: key -> array/list (baseline). Mengembalikan dict baru (tak boleh < 0) setelah dampak kejadian."""
         base = {k: np.asarray(v, dtype=float) for k, v in rev.items()}
         delta = {k: self._delta_key(k, base[k]) for k in REV_ALL}
+        for r in self.rec_k:
+            if r["key"] not in SUB_TRF:
+                continue
+            sh = self.share[r["key"]]
+            for y in r["years"]:
+                i = self.years.index(y)
+                cap = base["trf_pusat"][i] * sh                       # jenis transfer tak bisa dipotong melebihi nilainya
+                dv = cap * r["nilai"] / 100.0 if r["mode"] == "persen" else r["nilai"]
+                delta["trf_pusat"][i] += max(dv, -cap)
         for agg, members in AGG_REV.items():
             for r in self.rec_k:
                 if r["key"] != agg:
@@ -240,3 +288,29 @@ CONTOH_A = pd.DataFrame([
     ["Resesi daerah", 2025, 2026, "delta_pad", "tambah", -3, "laju PAD turun 3 poin/tahun"],
     ["Pemotongan transfer pusat 2026", 2026, "akhir", "tpp_scale", "ganti", 90, "TPP diturunkan 10% sebagai respons"],
 ], columns=COLS_A)
+
+
+def contoh_tables(years, jenis: str = "Kabupaten"):
+    """Contoh pengisian yang tahunnya mengikuti horizon proyeksi (hanya contoh; tidak dibaca aplikasi)."""
+    ys = list(years)
+    n = len(ys)
+    y = lambda i: ys[min(i, n - 1)]
+    bawah = "kab/kota" if jenis == "Provinsi" else "desa"
+    K = pd.DataFrame([
+        [f"Pemotongan transfer pusat {y(2)}", y(2), "akhir", "trf_pusat", "persen", -10, "seluruh transfer pusat dipangkas 10% (satu angka)"],
+        [f"Pemotongan DAU & DAK {y(1)}", y(1), "akhir", "trf_dau", "persen", -15, "hanya DAU turun 15% (butuh Dasar.trf_dau)"],
+        [f"Pemotongan DAU & DAK {y(1)}", y(1), "akhir", "trf_dak", "rupiah", -5e9, "DAK turun Rp5 M per tahun (butuh Dasar.trf_dak)"],
+        [f"Pemotongan transfer pusat {y(2)}", y(2), "akhir", "belanja_total", "rupiah", -20e9, "pagu belanja dipangkas tambahan Rp20 M/tahun"],
+        [f"Pemda memangkas transfer ke {bawah}", y(2), "akhir", "belanja_transfer_total", "persen", -10, f"transfer ke {bawah} dikurangi 10%; total belanja ikut turun"],
+        ["Penurunan transfer antar daerah", y(1), y(2), "trf_antar", "persen", -20, "bantuan keuangan antar daerah turun 20%"],
+        ["Bencana alam", y(1), None, "btt", "rupiah", 15e9, "BTT tanggap darurat, sekali"],
+        ["Bencana alam", y(1), None, "modal", "persen", -8, "modal digeser ke penanganan bencana"],
+        ["Resesi daerah", y(1), y(2), "pad", "persen", -6, "PAD turun 6% selama 2 tahun"],
+        ["Penerimaan luar biasa", y(2), None, "silpa", "rupiah", 12e9, "SiLPA tambahan sekali"],
+    ], columns=COLS_K)
+    A = pd.DataFrame([
+        [f"Pemotongan transfer pusat {y(2)}", y(2), "akhir", "passthrough_dau", "ganti", 50, "DAU tak lagi sepenuhnya mengikuti gaji ASN"],
+        ["Resesi daerah", y(1), y(2), "delta_pad", "tambah", -3, "laju PAD turun 3 poin/tahun"],
+        [f"Pemotongan transfer pusat {y(2)}", y(2), "akhir", "tpp_scale", "ganti", 90, "TPP diturunkan 10% sebagai respons"],
+    ], columns=COLS_A)
+    return K, A

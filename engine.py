@@ -12,7 +12,7 @@ import events as ev
 OWN_SOURCE = ["pajak", "retribusi", "kekayaan", "lain_pad", "hibah"]   # tumbuh dua fase (pemulihan -> normal)
 REV_KEYS = ["pajak", "retribusi", "kekayaan", "lain_pad", "trf_pusat", "trf_antar", "hibah", "pend_lain"]
 EXP_KEYS = ["peg_total", "barjas", "belanja_hibah", "bansos", "modal", "btt", "transfer"]
-KEBIJAKAN_LAMA = "Kebijakan lama (TPP 2022 + inflasi)"
+KEBIJAKAN_LAMA = "Kebijakan lama (TPP tahun dasar + inflasi)"
 
 
 @dataclass
@@ -30,8 +30,10 @@ class Inputs:
 class Params:
     pendekatan: str = "A3"          # A1 | A2 | A3 (lihat narasi Bab 4.2.5)
     n_pemulihan: int = 2            # jumlah tahun proyeksi memakai laju "pemulihan"
-    tahun_normal: tuple = (2017, 2018, 2019)
-    tahun_rata: tuple = (2016, 2017, 2018, 2019)   # rata-rata inflasi, BTT, rasio belanja/pendapatan (A1)
+    tahun_normal: tuple = (2017, 2018, 2019)      # tahun yang laju tumbuhnya dirata-rata sebagai laju "normal"
+    tahun_rata: tuple = (2016, 2017, 2018, 2019)   # rata-rata level: BTT, rasio belanja/pendapatan (A1), (opsional) inflasi
+    tahun_abnormal: tuple = ()      # tahun tak normal (mis. pandemi): tak dipakai; laju yang menyentuh tahun ini dibuang dari rata-rata normal
+    tahun_pemulihan: tuple | None = None   # tahun yang pertumbuhannya dipakai sbg laju pemulihan (dirata-rata); None = tahun dasar
     outlier_cap: float = 5.0        # laju tumbuh > cap dibuang dari rata-rata (mis. hibah 2018 = 28,5x)
     floor_pemulihan: bool = True    # laju pemulihan < 1 dianggap 1 (sama dengan tahun sebelumnya)
     inflasi_tpp: float = 0.0278
@@ -60,13 +62,16 @@ def _growth(s: pd.Series) -> dict:
 
 
 def rec_factor(s: pd.Series, p: Params, base_year: int) -> float:
-    f = _growth(s).get(base_year, 1.0)
+    g = _growth(s)
+    v = [g[y] for y in (p.tahun_pemulihan or (base_year,)) if y in g]
+    f = float(np.mean(v)) if v else 1.0
     return 1.0 if (p.floor_pemulihan and f < 1) else f
 
 
 def nor_factor(s: pd.Series, p: Params) -> float:
     g = _growth(s)
-    v = [g[y] for y in p.tahun_normal if y in g and g[y] <= p.outlier_cap]
+    abn = set(p.tahun_abnormal)
+    v = [g[y] for y in p.tahun_normal if y in g and g[y] <= p.outlier_cap and y not in abn and (y - 1) not in abn]
     return float(np.mean(v)) if v else 1.0
 
 
@@ -174,7 +179,8 @@ def run(inp: Inputs, p: Params, tpp_total: pd.Series, scenario: str = "") -> Res
     pad = sum(np.array(rev[k]) for k in ["pajak", "retribusi", "kekayaan", "lain_pad"])
 
     # ---------- total belanja (ditentukan metode; kejadian masuk lewat pendapatan / baris belanja_total)
-    btt = float(h.loc["btt", list(p.tahun_rata)].mean())
+    rata = [y for y in p.tahun_rata if y not in set(p.tahun_abnormal)]
+    btt = float(h.loc["btt", rata].mean())
     trf_b = np.array([h.loc["transfer", by]] * n, dtype=float)
     pem = _two_phase(h.loc["pemeliharaan", by], 1.0, nor_factor(h.loc["pemeliharaan"], p), n, 0)
     if p.pendekatan == "A2":
@@ -185,12 +191,14 @@ def run(inp: Inputs, p: Params, tpp_total: pd.Series, scenario: str = "") -> Res
         modal = _two_phase(h.loc["modal", by], 1.0, nor_factor(h.loc["modal"], p), n, 0)
         k0 = h.loc["belanja", by] / h.loc["pendapatan", by]
         if p.pendekatan == "A1":
-            k_norm = float((h.loc["belanja", list(p.tahun_rata)] / h.loc["pendapatan", list(p.tahun_rata)]).mean())
+            k_norm = float((h.loc["belanja", rata] / h.loc["pendapatan", rata]).mean())
             k = np.array([k0 if i < p.n_pemulihan else k_norm for i in range(n)])
         else:
             k = np.full(n, k0)
         B = k * (1 + P["k_shift"]) * pend
     B = np.maximum(B + sh.delta("belanja_total", B), 0.0)
+    d_trf_tot = np.maximum(sh.delta("belanja_transfer_total", trf_b), -trf_b)   # pemda memotong/menambah transfer ke bawahan -> total belanja ikut
+    B = np.maximum(B + d_trf_tot, 0.0)
     modal, pem = np.array(modal, dtype=float), np.array(pem, dtype=float)
 
     # ---------- dampak kejadian pada komposisi belanja (total belanja tetap; selisih diserap barjas/hibah/bansos)
@@ -199,7 +207,7 @@ def run(inp: Inputs, p: Params, tpp_total: pd.Series, scenario: str = "") -> Res
     pem = np.maximum(pem + sh.delta("pemeliharaan", pem), 0.0)
     btt_arr = np.full(n, btt)
     btt_arr = np.maximum(btt_arr + sh.delta("btt", btt_arr), 0.0)
-    trf_b = np.maximum(trf_b + sh.delta("belanja_transfer", trf_b), 0.0)
+    trf_b = np.maximum(trf_b + sh.delta("belanja_transfer", trf_b) + d_trf_tot, 0.0)
 
     # ---------- belanja pegawai
     ins_p = P["r_insentif_pajak"] * np.array(rev["pajak"])

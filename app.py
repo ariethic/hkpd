@@ -1,45 +1,3 @@
-# =========================================================
-# TARUH BLOK INI DI BAGIAN PALING ATAS FILE APP.PY ANDA
-# =========================================================
-import streamlit as st
-import pandas as pd
-import numpy as np
-import streamlit_authenticator as stauth
-
-credentials = {
-    "usernames": {
-        "Tamu1": {"name": "Tamu1", "password": "Rahasia123"},
-        "Tamu2": {"name": "Tamu2", "password": "Rahasia456"}
-    }
-}
-
-authenticator = stauth.Authenticate(
-    credentials,
-    cookie_name="streamlit_login_cookie",
-    key="kunci_rahasia_bebas_apa_saja",
-    cookie_expiry_days=30
-)
-
-authenticator.login(fields={'Form name': 'Silakan Login'})
-
-# JIKA BELUM LOGIN ATAU PASSWORD SALAH, STOP APLIKASI DI SINI
-if st.session_state["authentication_status"] is False:
-    st.error('Username atau password salah. Silakan coba lagi.')
-    st.stop() # Menghentikan kode agar tidak lanjut ke bawah
-elif st.session_state["authentication_status"] is None:
-    st.warning('Harap masukkan username dan password Anda.')
-    st.stop() # Menghentikan kode agar tidak lanjut ke bawah
-
-# JIKA BERHASIL LOGIN, TAMPILKAN TOMBOL LOGOUT
-authenticator.logout('Log out', 'sidebar')
-
-# =========================================================
-# DI BAWAH SINI: LANGSUNG TEMPEL SELURUH KODE ASLI CLAUDE
-# TANPA PERLU DIUBAH ATAU DIGESER SPASINYA SAMA SEKALI
-# =========================================================
-st.success(f"Selamat datang, {st.session_state['name']}!")
-
-#----------------------------------------------------------
 import io, hashlib
 from dataclasses import replace
 from pathlib import Path
@@ -47,15 +5,14 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-
 from engine import Params, run_all, all_scenarios, KEBIJAKAN_LAMA
-from io_utils import tables_from_excel, tables_to_ui, inputs_from_tables, SHEETS, EVENT_SHEETS, coerce_event_table
+from io_utils import tables_from_excel, tables_to_ui, inputs_from_tables, normalize_tables, template_bytes, SHEETS, EVENT_SHEETS, coerce_event_table
+import periode as pr
 import advisor as ad
 import events as ev
 
 st.set_page_config(page_title="Proyeksi Kepatuhan UU HKPD", page_icon="📊", layout="wide")
-TEMPLATE = Path(__file__).parent / "data" / "template_input_hkpd.xlsx"
-APPROACH = {"A3": "Pendekatan 3 — belanja = rasio tahun dasar × pendapatan (direkomendasikan kajian pemda xxx)",
+APPROACH = {"A3": "Pendekatan 3 — belanja = rasio tahun dasar × pendapatan (direkomendasikan kajian Magelang)",
             "A1": "Pendekatan 1 — rasio belanja/pendapatan naik ke rata-rata masa normal setelah masa pemulihan",
             "A2": "Pendekatan 2 — belanja dari penjumlahan tren tiap jenis belanja (bottom-up)"}
 M = 1e9  # tampilkan dalam Rp miliar
@@ -68,8 +25,16 @@ def show(df, **kw):
 
 
 # ------------------------------------------------------------------ state data
+DEMO = Path(__file__).parent / "data" / "template_input_hkpd.xlsx"     # data contoh Kab. Magelang
+MG = pr.magelang()
+PRESET_MG, PRESET_OWN = "Kab. Magelang (setup + data contoh)", "Isi sendiri"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
 def load_demo():
-    return tables_to_ui(tables_from_excel(TEMPLATE))
+    # data Magelang diselaraskan ke struktur baku (menambah baris opsional trf_dau/dbh/dak dan golongan pensiun lengkap); hasil identik
+    return tables_to_ui(pr.align_tables(MG, tables_from_excel(DEMO)))
+
 
 def set_tables(t, src):
     st.session_state.tables_src = {k: v.copy() for k, v in t.items()}   # yang ditampilkan editor
@@ -78,34 +43,141 @@ def set_tables(t, src):
     st.session_state.ver = {k: st.session_state.get("ver", {}).get(k, 0) + 1 for k in t}
 
 
+def setup_to_state(s):
+    st.session_state.update(su_jenis=s.jenis_pemda, su_awal=s.tahun_awal, su_dasar=s.tahun_dasar, su_akhir=s.tahun_akhir,
+                            su_target=s.tahun_target, su_normal=list(s.tahun_normal), su_abn=list(s.tahun_abnormal),
+                            su_pem=list(s.tahun_pemulihan), su_npem=s.n_pemulihan, su_rata=list(s.tahun_rata),
+                            su_cap=s.outlier_cap, su_floor=s.floor_pemulihan)
+
+
+def state_to_setup():
+    g = st.session_state
+    return pr.Setup(jenis_pemda=g.su_jenis, tahun_awal=g.su_awal, tahun_dasar=g.su_dasar, tahun_akhir=g.su_akhir, tahun_target=g.su_target,
+                    tahun_normal=g.su_normal, tahun_abnormal=g.su_abn, tahun_pemulihan=g.su_pem, n_pemulihan=g.su_npem,
+                    tahun_rata=g.su_rata, outlier_cap=g.su_cap, floor_pemulihan=g.su_floor)
+
+
+def _on_preset():
+    if st.session_state.su_preset == PRESET_MG:
+        setup_to_state(MG)
+        set_tables(load_demo(), "demo")
+
+
+def _reload_demo():
+    st.session_state.su_preset = PRESET_MG
+    setup_to_state(MG)
+    set_tables(load_demo(), "demo")
+
+
+def _touch():
+    st.session_state.su_preset = PRESET_OWN
+
+
+def _do_align():
+    set_tables(pr.align_tables(state_to_setup(), st.session_state.tables), "aligned")
+
+
+def _do_blank():
+    st.session_state.su_preset = PRESET_OWN
+    set_tables(pr.template_tables(state_to_setup()), "blank")
+
+
 if "tables" not in st.session_state:
+    setup_to_state(MG)
+    st.session_state.su_preset = PRESET_MG
+    st.session_state.su_inflsrc = "Isi sendiri"
     set_tables(load_demo(), "demo")
 
 # ------------------------------------------------------------------ sidebar
 with st.sidebar:
     st.title("📊 Proyeksi UU HKPD")
     st.caption("Pasal 146 (belanja pegawai ≤ 30%) & Pasal 147 (belanja infrastruktur ≥ 40%)")
-    st.download_button("⬇️ Unduh template Excel", TEMPLATE.read_bytes(), "template_input_hkpd.xlsx",
-                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    # --- 0. muat file (di atas setup: bila file memuat setup, setup di bawah langsung mengikuti)
     up = st.file_uploader("Unggah template terisi (.xlsx)", type=["xlsx"])
     if up is not None:
         sig_up = hashlib.md5(up.getvalue()).hexdigest()
         if st.session_state.get("src") != sig_up:
             try:
-                set_tables(tables_to_ui(tables_from_excel(io.BytesIO(up.getvalue()))), sig_up)
-                st.success("Data dimuat dari file Anda.")
+                raw_up = tables_from_excel(io.BytesIO(up.getvalue()))
+                fs = pr.infer_setup(raw_up, state_to_setup())
+                set_tables(tables_to_ui(raw_up), sig_up)
+                setup_to_state(fs)
+                st.session_state.su_preset = PRESET_OWN
+                st.session_state.upload_note = ("Setup dibaca dari sheet 'Setup' di file." if "Setup" in raw_up else
+                                                "File tanpa sheet 'Setup': tahun disimpulkan dari tabel; tahun normal/abnormal/pemulihan diambil dari sidebar — periksa.")
+                st.session_state.upload_ok = True
             except Exception as e:
-                st.error(f"Gagal membaca file: {e}")
-    if st.button("↩️ Kembali ke data contoh (Kab. pemda xxx)"):
-        set_tables(load_demo(), "demo"); st.rerun()
+                st.session_state.upload_note = f"Gagal membaca file: {e}"
+                st.session_state.upload_ok = False
+        (st.success if st.session_state.get("upload_ok") else st.error)(st.session_state.get("upload_note", ""))
+
+    # --- 1. setup periode & asumsi (wajib)
+    st.subheader("1️⃣ Setup periode & asumsi (wajib)")
+    st.radio("Mulai dari", [PRESET_MG, PRESET_OWN], key="su_preset", on_change=_on_preset,
+             help="Magelang: mengisi seluruh setup dan data contoh. Isi sendiri: ubah setup di bawah, lalu unduh template yang menyesuaikan.")
+    st.selectbox("Jenis pemda", pr.JENIS, key="su_jenis", on_change=_touch,
+                 help="Provinsi: transfer ke bawahan = kab/kota. Kabupaten/Kota: transfer ke bawahan = desa. Hanya mengubah label dan contoh.")
+    c1, c2, c3 = st.columns(3)
+    c1.number_input("Tahun awal data", 1990, 2100, step=1, key="su_awal", on_change=_touch, help="Tahun pertama data historis (tidak harus 2016).")
+    c2.number_input("Tahun dasar", 1990, 2100, step=1, key="su_dasar", on_change=_touch, help="APBD/realisasi terakhir yang dipakai sebagai dasar proyeksi.")
+    c3.number_input("Tahun akhir proyeksi", 1990, 2100, step=1, key="su_akhir", on_change=_touch, help="Horizon: tahun terakhir yang diproyeksikan.")
+    g = st.session_state
+    lo, hi, zz = g.su_awal, max(g.su_dasar, g.su_awal + 1), max(g.su_akhir, g.su_dasar + 1)
+    ys_all, ys_grow, ys_proj = list(range(lo, hi + 1)), list(range(lo + 1, hi + 1)), list(range(hi + 1, zz + 1))
+    for key, opts in (("su_normal", ys_grow), ("su_abn", ys_all), ("su_pem", ys_grow), ("su_rata", ys_all)):
+        g[key] = [y for y in g[key] if y in opts]
+    if g.su_target not in ys_proj:
+        g.su_target = ys_proj[-1]
+    g.su_npem = int(min(max(g.su_npem, 0), len(ys_proj)))
+    st.selectbox("Tahun target kepatuhan", ys_proj, key="su_target", on_change=_touch, help="Tahun yang dievaluasi untuk status Pasal 146/147 dan saran.")
+    st.multiselect("Tahun NORMAL (laju tumbuh dirata-rata)", ys_grow, key="su_normal", on_change=_touch,
+                   help="Laju tumbuh tahun-tahun ini dirata-rata menjadi laju normal. Tahun yang laju tumbuhnya menyentuh tahun abnormal otomatis dibuang.")
+    st.multiselect("Tahun ABNORMAL (tidak dipakai)", ys_all, key="su_abn", on_change=_touch, help="Mis. tahun pandemi. Tidak masuk laju normal maupun rata-rata rujukan.")
+    st.multiselect("Tahun acuan laju PEMULIHAN", ys_grow, key="su_pem", on_change=_touch,
+                   help="Pertumbuhan tahun-tahun ini (dirata-rata) menjadi laju pemulihan. Biasanya tahun dasar vs tahun sebelumnya.")
+    st.number_input("Lama pemulihan (tahun proyeksi)", 0, len(ys_proj), step=1, key="su_npem", on_change=_touch,
+                    help="Jumlah tahun proyeksi pertama yang memakai laju pemulihan; sesudahnya laju normal. 0 = langsung normal.")
+    st.multiselect("Tahun rujukan rata-rata (BTT, rasio belanja/pendapatan, inflasi)", ys_all, key="su_rata", on_change=_touch,
+                   help="Rata-rata level pada tahun-tahun ini untuk BTT, rasio belanja/pendapatan (Pendekatan 1), dan inflasi bila diambil dari data.")
+    with st.expander("Aturan penyaring laju tumbuh"):
+        st.number_input("Batas pencilan (kali)", 1.1, 1000.0, step=0.5, key="su_cap", on_change=_touch,
+                        help="Laju tumbuh di atas batas ini dibuang dari rata-rata normal (mis. hibah yang melonjak 28×).")
+        st.checkbox("Laju pemulihan < 100% dianggap 100%", key="su_floor", on_change=_touch,
+                    help="Bila aktif, komponen tidak diproyeksikan turun pada masa pemulihan (perilaku kertas kerja).")
+    setup = state_to_setup()
+    s_err, s_warn = setup.errors(), setup.warnings()
+    for m_ in s_err:
+        st.error(m_)
+    for m_ in s_warn:
+        st.info(m_)
+
+    # --- 2. data: template mengikuti setup
+    st.subheader("2️⃣ Data (template mengikuti setup)")
+    if s_err:
+        st.caption("Perbaiki setup di atas agar template bisa dibuat.")
+    else:
+        st.download_button("⬇️ Template KOSONG sesuai setup", template_bytes(setup), f"template_hkpd_{setup.tahun_awal}_{setup.tahun_akhir}.xlsx", XLSX)
+        st.download_button("⬇️ Data saat ini (sesuai setup)", template_bytes(setup, st.session_state.tables), f"data_hkpd_{setup.tahun_awal}_{setup.tahun_akhir}.xlsx", XLSX)
+        iss = pr.structure_issues(setup, normalize_tables(st.session_state.tables))
+        if iss:
+            st.warning("Struktur tabel tidak cocok dengan setup:\n\n" + "\n\n".join("• " + i for i in iss))
+            st.button("🔧 Sesuaikan struktur tabel dengan setup", on_click=_do_align, help="Nilai pada tahun/kode yang sama dipertahankan; sel baru kosong.")
+        st.button("🆕 Mulai dari template kosong sesuai setup", on_click=_do_blank)
+    st.button("↩️ Muat ulang contoh Kab. Magelang", on_click=_reload_demo)
     use_ev = st.checkbox("Terapkan kejadian tak terduga (tab Kejadian)", True,
                          help="Kosongkan tabel kejadian bila tidak ada. Matikan centang ini untuk melihat model dasar tanpa kejadian.")
     st.divider()
-    st.subheader("Parameter regulasi")
+    st.subheader("3️⃣ Parameter regulasi & asumsi dasar")
     pend = st.selectbox("Metode proyeksi total belanja", list(APPROACH), index=0, format_func=lambda k: APPROACH[k])
     batas_peg = st.number_input("Batas maksimum belanja pegawai (%)", 10.0, 60.0, 30.0, 0.5) / 100
     batas_inf = st.number_input("Batas minimum belanja infrastruktur (%)", 5.0, 80.0, 40.0, 0.5) / 100
-    infl = st.number_input("Inflasi untuk TPP kebijakan lama (%/thn)", 0.0, 15.0, 2.78, 0.01) / 100
+    infl_src = st.radio("Inflasi untuk TPP kebijakan lama", ["Isi sendiri", "Rata-rata inflasi historis (tahun rujukan)"], key="su_inflsrc",
+                        help="Bila diambil dari data, baris 'inflasi' di sheet Historis wajib terisi pada tahun rujukan.")
+    infl_in = st.number_input("Inflasi TPP (%/thn) bila diisi sendiri", 0.0, 15.0, 2.78, 0.01) / 100
+    r_ip = st.number_input("Insentif pemungutan pajak (% dari pajak)", 0.0, 30.0, 5.0, 0.5) / 100
+    r_ir = st.number_input("Insentif pemungutan retribusi (% dari retribusi)", 0.0, 30.0, 5.0, 0.5) / 100
+    infl_from_data = infl_src.startswith("Rata-rata")
 
 # data tab dikerjakan lebih dulu agar hasil edit langsung dipakai
 TAB_NAMES = ["Ringkasan & Saran", "Proyeksi APBD", "Skenario TPP", "Batas TPP", "Infrastruktur", "Risiko", "Kejadian Tak Terduga", "Data & Asumsi", "Metodologi"]
@@ -151,11 +223,7 @@ def append_row(s, row):
 
 
 def _years_ui():
-    try:
-        ys = pd.to_numeric(st.session_state.tables["Jalur"]["tahun"], errors="coerce").dropna().astype(int).tolist()
-        return ys or list(range(2023, 2028))
-    except Exception:
-        return list(range(2023, 2028))
+    return setup.proj_years if not s_err else list(range(2023, 2028))
 
 
 with tabs[7]:
@@ -163,7 +231,7 @@ with tabs[7]:
     st.caption("Edit langsung, atau **salin sel dari Excel lalu tempel (Ctrl+V)** ke tabel. Angka dalam Rupiah penuh. "
                "Tambah baris/kolom tahun bila perlu. Hasil di tab lain otomatis menyesuaikan.")
     helps = {"Historis": "Kolom `kode` jangan diubah. Kolom tahun boleh ditambah (mis. 2023 bila sudah ada).",
-             "Dasar": "Rincian belanja pegawai tahun dasar, SiLPA, dan jumlah penerima TPP tahun dasar.",
+             "Dasar": "Rincian belanja pegawai tahun dasar, SiLPA, dan jumlah penerima TPP tahun dasar. Baris trf_dau/trf_dbh/trf_dak (opsional): isi nilai tahun dasar bila ingin memodelkan pemotongan per jenis transfer pusat.",
              "Pensiun": "Jumlah pegawai pensiun per golongan dan rata-rata gaji+tunjangan per tahun. Tahun di luar data = tahun terakhir.",
              "Jalur": "Horizon proyeksi = jumlah baris. Tambah baris untuk memperpanjang horizon (mis. bila batas waktu diundur).",
              "Skenario_TPP": "Total belanja TPP per tahun per skenario. Tambah kolom untuk skenario baru."}
@@ -190,11 +258,13 @@ with tabs[6]:
                     "- Baris `modal`, `pemeliharaan`, `tpp`, `peg_lain`, `btt`, `belanja_transfer` **menggeser komposisi** di dalam total belanja; selisihnya diserap pagu barang-jasa/hibah/bansos.\n"
                     "- Asumsi: mode **ganti** memakai nilai baru pada periode itu; **tambah** menambahkannya ke nilai dasar (sidebar).")
         c1, c2 = st.columns(2)
-        c1.dataframe(pd.DataFrame({"komponen": list(ev.KOMPONEN), "arti": list(ev.KOMPONEN.values())}), hide_index=True)
+        _lab = ev.komponen_labels(setup.jenis_pemda)
+        c1.dataframe(pd.DataFrame({"komponen": list(_lab), "arti": list(_lab.values())}), hide_index=True)
         c2.dataframe(pd.DataFrame({"parameter": list(ev.PARAMETER), "arti": list(ev.PARAMETER.values())}), hide_index=True)
         st.caption("Contoh pengisian (tidak dipakai kecuali Anda salin ke tabel):")
-        st.dataframe(ev.CONTOH_K, hide_index=True)
-        st.dataframe(ev.CONTOH_A, hide_index=True)
+        _ck, _ca = ev.contoh_tables(_years_ui(), setup.jenis_pemda)
+        st.dataframe(_ck, hide_index=True)
+        st.dataframe(_ca, hide_index=True)
     st.markdown("**Tabel Kejadian** — dampak langsung")
     table_editor("Kejadian", CFG_K)
     with st.expander("➕ Tambah satu baris kejadian lewat formulir"):
@@ -202,7 +272,7 @@ with tabs[6]:
             ysf = _years_ui()
             f1, f2, f3 = st.columns(3)
             nm_k = f1.text_input("Nama kejadian", "")
-            kp = f2.selectbox("Komponen", list(ev.KOMPONEN), format_func=lambda k: f"{k} — {ev.KOMPONEN[k]}")
+            kp = f2.selectbox("Komponen", list(ev.KOMPONEN), format_func=lambda k: f"{k} — {ev.komponen_labels(setup.jenis_pemda)[k]}")
             md = f3.selectbox("Mode", ["persen", "rupiah"])
             g1, g2, g3 = st.columns(3)
             vl = g1.number_input("Nilai (negatif = pengurangan)", value=0.0, step=1.0, format="%.2f")
@@ -218,7 +288,7 @@ with tabs[6]:
             ysf = _years_ui()
             f1, f2, f3 = st.columns(3)
             nm_a = f1.text_input("Nama kejadian ", "")
-            pr = f2.selectbox("Parameter", list(ev.PARAMETER), format_func=lambda k: f"{k} — {ev.PARAMETER[k]}")
+            prm = f2.selectbox("Parameter", list(ev.PARAMETER), format_func=lambda k: f"{k} — {ev.PARAMETER[k]}")
             ma = f3.selectbox("Mode ", ["ganti", "tambah"])
             g1, g2, g3 = st.columns(3)
             va = g1.number_input("Nilai (persen; delta_pad dalam poin %)", value=0.0, step=1.0, format="%.2f")
@@ -226,11 +296,13 @@ with tabs[6]:
             ys2 = g3.selectbox("Tahun selesai ", ["(hanya tahun mulai)"] + ysf + ["akhir"])
             ket2 = st.text_input("Keterangan ", "")
             if st.form_submit_button("Tambahkan ke tabel Asumsi") and (va != 0 or ma == "ganti"):
-                append_row("Asumsi_Kejadian", [nm_a, ym2, "" if ys2.startswith("(") else ys2, pr, ma, va, ket2])
+                append_row("Asumsi_Kejadian", [nm_a, ym2, "" if ys2.startswith("(") else ys2, prm, ma, va, ket2])
 
 # ------------------------------------------------------------------ hitung
 try:
-    inp_raw = inputs_from_tables(st.session_state.tables)
+    if s_err:
+        raise ValueError("Setup di sidebar belum valid — " + " | ".join(s_err))
+    inp_raw = inputs_from_tables(st.session_state.tables, setup, inflasi_dari_data=infl_from_data)
     inp = inp_raw if use_ev else ev.without_events(inp_raw)
 except Exception as e:
     for i in (0, 1, 2, 3, 4, 5):
@@ -239,8 +311,10 @@ except Exception as e:
     st.stop()
 
 years = list(inp.jalur.index)
+T = setup.tahun_target
+_rata = [y for y in setup.tahun_rata if y not in set(setup.tahun_abnormal)]
+infl = float(inp.hist.loc["inflasi", _rata].mean()) / 100 if infl_from_data else infl_in
 with st.sidebar:
-    T = st.selectbox("Tahun target kepatuhan", years, index=min(len(years) - 1, years.index(2027) if 2027 in years else len(years) - 1))
     with st.expander("Tuas skenario lanjutan"):
         fp = st.slider("Efek pensiun di tahun pensiun", 0.0, 1.0, 1.0, 0.05, help="1 = penuh (asumsi kertas kerja). 0,5 = pensiun rata-rata di tengah tahun.")
         pt = st.slider("Transfer pusat mengikuti perubahan gaji ASN", 0.0, 1.0, 1.0, 0.05)
@@ -251,9 +325,10 @@ with st.sidebar:
         dp = st.slider("Tambahan laju tumbuh pendapatan sendiri (poin/thn)", -5.0, 10.0, 0.0, 0.5) / 100
         ks = st.slider("Pergeseran rasio belanja/pendapatan (%)", -10.0, 10.0, 0.0, 0.5) / 100
         ts = st.slider("Skala semua skenario TPP (%)", 50, 150, 100, 5) / 100
-p = Params(pendekatan=pend, batas_pegawai=batas_peg, batas_infra=batas_inf, inflasi_tpp=infl, tahun_target=T,
-           faktor_pensiun=fp, passthrough_dau=pt, pppk_pusat_pct=pc, pppk_pusat_mode=pm, kredit_barjas_pct=kb,
-           delta_pad=dp, k_shift=ks, tpp_scale=ts)
+p = setup.to_params(pendekatan=pend, batas_pegawai=batas_peg, batas_infra=batas_inf, inflasi_tpp=infl,
+                    r_insentif_pajak=r_ip, r_insentif_retribusi=r_ir,
+                    faktor_pensiun=fp, passthrough_dau=pt, pppk_pusat_pct=pc, pppk_pusat_mode=pm, kredit_barjas_pct=kb,
+                    delta_pad=dp, k_shift=ks, tpp_scale=ts)
 try:
     results = run_all(inp, p)
 except Exception as e:
@@ -264,7 +339,7 @@ ev_active = bool(results and results[names[0]].event_active)
 results0 = run_all(ev.without_events(inp), p) if ev_active else None
 _all = all_scenarios(inp, p)
 skipped = [c for c in _all.columns if c not in results]
-sig = hashlib.md5((repr(p) + str(use_ev) + "".join(df.to_csv() for df in st.session_state.tables.values())).encode()).hexdigest()
+sig = hashlib.md5((repr(p) + repr(setup) + str(use_ev) + "".join(df.to_csv() for df in st.session_state.tables.values())).encode()).hexdigest()
 
 def status(ok): return "✅ Patuh" if ok else "❌ Tidak patuh"
 def pct_fmt(x): return "n/a" if not np.isfinite(x) else f"{x*100:.2f}%"
@@ -319,6 +394,8 @@ with tabs[0]:
             ad.dampak_per_kejadian(inp, p, names[0]).to_excel(xw, sheet_name="Dampak_per_Kejadian", index=False)
             coerce_event_table("Kejadian", inp.kejadian).to_excel(xw, sheet_name="Input_Kejadian", index=False)
             coerce_event_table("Asumsi_Kejadian", inp.asumsi_kejadian).to_excel(xw, sheet_name="Input_Asumsi_Kejadian", index=False)
+        setup.to_df().to_excel(xw, sheet_name="Asumsi_Setup", index=False)
+        pd.DataFrame([{"parameter": k, "nilai": str(v)} for k, v in vars(p).items()]).to_excel(xw, sheet_name="Asumsi_Parameter", index=False)
         pd.DataFrame({"Sheet": [f"Proyeksi{i}/BatasTPP{i}" for i in range(1, len(names) + 1)], "Skenario TPP": names}).to_excel(xw, sheet_name="Peta_Sheet", index=False)
     st.download_button("⬇️ Unduh laporan (Excel)", buf.getvalue(), "laporan_proyeksi_hkpd.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -459,11 +536,18 @@ with tabs[6]:
 
 # ------------------------------------------------------------------ tab 8
 with tabs[8]:
+    _j = lambda t: ", ".join(str(y) for y in t) or "-"
+    st.markdown(f"""
+### Asumsi periode yang sedang dipakai (dari sidebar)
+- Data historis **{setup.tahun_awal}–{setup.tahun_dasar}**, tahun dasar **{setup.tahun_dasar}**, proyeksi **{setup.tahun_dasar + 1}–{setup.tahun_akhir}**, target kepatuhan **{setup.tahun_target}**.
+- Tahun **normal**: {_j(setup.tahun_normal)} · **abnormal** (tidak dipakai): {_j(setup.tahun_abnormal)} · acuan laju **pemulihan**: {_j(setup.tahun_pemulihan)}, dipakai **{setup.n_pemulihan}** tahun proyeksi · rujukan rata-rata: {_j(setup.tahun_rata)}.
+- Pencilan: laju > **{setup.outlier_cap:g}×** dibuang · lantai pemulihan: **{'aktif' if setup.floor_pemulihan else 'nonaktif'}** · inflasi TPP: **{p.inflasi_tpp*100:.2f}%** ({'dari data historis' if infl_from_data else 'diisi sendiri'}).
+""")
     st.markdown("""
-### Alur model (mengikuti kertas kerja Kab. pemda xxx, divalidasi hingga rupiah)
-1. **Periode data**: laju tumbuh *normal* = rata-rata 2017–2019; laju *pemulihan* = pertumbuhan tahun dasar vs tahun sebelumnya (dipakai 2 tahun pertama); 2020–2021 dianggap tidak normal dan tidak dipakai. Laju pemulihan < 100% dianggap 100%; laju > 5× dibuang sebagai pencilan (mis. hibah 2018).
+### Alur model (mengikuti kertas kerja Kab. Magelang, divalidasi hingga rupiah)
+1. **Periode data**: laju tumbuh *normal* = rata-rata laju pada **tahun normal** (tahun yang laju tumbuhnya menyentuh tahun abnormal dibuang); laju *pemulihan* = rata-rata pertumbuhan **tahun acuan pemulihan** (dipakai sebanyak *lama pemulihan* tahun proyeksi pertama); tahun abnormal tidak dipakai. Laju pemulihan < 100% dianggap 100% (bila diaktifkan); laju di atas batas pencilan dibuang dari rata-rata normal.
 2. **Pendapatan**: PAD & hibah tumbuh dua fase; transfer antar daerah tetap; transfer pusat = tahun lalu − gaji PNS pensiun + perubahan gaji PPPK (karena DAU memuat komponen gaji).
-3. **Total belanja** (Pendekatan 3): rasio belanja/pendapatan tahun dasar × pendapatan. Belanja transfer tetap, BTT = rata-rata 2016–2019, belanja modal & pemeliharaan tumbuh dengan laju normal.
+3. **Total belanja** (Pendekatan 3): rasio belanja/pendapatan tahun dasar × pendapatan. Belanja transfer tetap, BTT = rata-rata pada tahun rujukan, belanja modal & pemeliharaan tumbuh dengan laju normal.
 4. **Belanja pegawai**: gaji PNS = tahun lalu − gaji pegawai pensiun; gaji PPPK dari jalur input; TPP dari skenario; insentif pajak/retribusi 5% dari target; komponen lain tetap. **Tunjangan guru dikeluarkan dari rasio** (Pasal 146).
 5. **Rasio** — Pasal 146: (belanja pegawai − tunjangan guru) ÷ total belanja ≤ 30%. Pasal 147: (belanja modal + pemeliharaan) ÷ (total belanja − belanja transfer) ≥ 40%.
 6. **Lapisan preskriptif** (tambahan di aplikasi): plafon TPP, jalur penyesuaian linear, kebutuhan realokasi infrastruktur dan tingkat kelayakannya, sensitivitas, simulasi, dan pemeriksaan data.
@@ -482,10 +566,3 @@ with tabs[8]:
 - Asumsi yang dapat diubah per periode: laju PAD, rasio belanja/pendapatan, skala TPP, pass-through DAU, skala pensiun, dukungan pusat atas PPPK, pengakuan barjas, inflasi TPP, insentif pungut.
 - Atribusi per kejadian dihitung dengan menjalankan model satu kejadian pada satu waktu; efek gabungan tidak harus sama dengan jumlah efek individual.
 """)
-
-    
-
-
-
-
-
