@@ -332,4 +332,3 @@ def advice_kejadian(inp: Inputs, p: Params, results: dict, results0: dict) -> li
             isi=f"Surplus/defisit {T}: {rp(c.surplus_dasar)} → {rp(c.surplus_kejadian)}; defisit kumulatif s.d. {T} {rp(d1.surplus.cumsum().loc[T])} "
                 f"vs SiLPA {rp(inp.dasar['silpa'])}" + (f" (SiLPA habis mulai {d1.index[cum1 < 0][0]})." if (cum1 < 0).any() else ".")))
     return adv
-#---
