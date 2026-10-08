@@ -1,6 +1,6 @@
 """
 Mesin proyeksi kepatuhan pemda terhadap UU 1/2022 (HKPD) Pasal 146 (belanja pegawai) & 147 (belanja infrastruktur).
-Replikasi logika kertas kerja Kab. Magelang (sheet F1/F2/F3) + parameter skenario tambahan (default = perilaku Excel).
+Replikasi logika kertas kerja Kab. pemda xxx (sheet F1/F2/F3) + parameter skenario tambahan (default = perilaku Excel).
 Semua nilai dalam Rupiah penuh.
 """
 from __future__ import annotations
