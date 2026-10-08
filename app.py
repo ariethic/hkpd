@@ -67,7 +67,7 @@ def show(df, **kw):
 
 # ------------------------------------------------------------------ state data
 DEMO = Path(__file__).parent / "data" / "template_input_hkpd.xlsx"     # data contoh Kab. pemda xxx
-MG = pr.pemda xxx()
+MG = pr.magelang()
 PRESET_MG, PRESET_OWN = "Kab. pemda xxx (setup + data contoh)", "Isi sendiri"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
