@@ -1,3 +1,44 @@
+# =========================================================
+# TARUH BLOK INI DI BAGIAN PALING ATAS FILE APP.PY ANDA
+# =========================================================
+import streamlit as st
+import pandas as pd
+import numpy as np
+import streamlit_authenticator as stauth
+
+credentials = {
+    "usernames": {
+        "Tamu1": {"name": "Tamu1", "password": "Rahasia123"},
+        "Tamu2": {"name": "Tamu2", "password": "Rahasia456"}
+    }
+}
+
+authenticator = stauth.Authenticate(
+    credentials,
+    cookie_name="streamlit_login_cookie",
+    key="kunci_rahasia_bebas_apa_saja",
+    cookie_expiry_days=30
+)
+
+authenticator.login(fields={'Form name': 'Silakan Login'})
+
+# JIKA BELUM LOGIN ATAU PASSWORD SALAH, STOP APLIKASI DI SINI
+if st.session_state["authentication_status"] is False:
+    st.error('Username atau password salah. Silakan coba lagi.')
+    st.stop() # Menghentikan kode agar tidak lanjut ke bawah
+elif st.session_state["authentication_status"] is None:
+    st.warning('Harap masukkan username dan password Anda.')
+    st.stop() # Menghentikan kode agar tidak lanjut ke bawah
+
+# JIKA BERHASIL LOGIN, TAMPILKAN TOMBOL LOGOUT
+authenticator.logout('Log out', 'sidebar')
+
+# =========================================================
+# DI BAWAH SINI: LANGSUNG TEMPEL SELURUH KODE ASLI CLAUDE
+# TANPA PERLU DIUBAH ATAU DIGESER SPASINYA SAMA SEKALI
+# =========================================================
+st.success(f"Selamat datang, {st.session_state['name']}!")
+
 import io, hashlib
 from dataclasses import replace
 from pathlib import Path
