@@ -177,7 +177,7 @@ class Setup:
                      floor_pemulihan=bool(int(float(d.get("floor_pemulihan", 1)))))
 
 
-def magelang() -> Setup:
+def pemda xxx() -> Setup:
     return Setup()
 
 
